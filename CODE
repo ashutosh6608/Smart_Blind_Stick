@@ -1,0 +1,182 @@
+#include "Wire.h"
+#include "I2Cdev.h"
+#include "MPU6050.h"
+#include <TinyGPS++.h>
+
+/* ---------- PHONE NUMBER (DEFINE ONCE) ---------- */
+const char phoneNumber[] = "+918115747924";
+
+/* ---------- OBJECTS ---------- */
+MPU6050 mpu;
+TinyGPSPlus gps;
+
+/* ---------- PINS ---------- */
+const int buz = 11;
+const int trigPin = 10;
+const int echoPin = 9;
+
+const int x_out = A0;
+const int y_out = A1;
+const int z_out = A2;
+
+/* ---------- VARIABLES ---------- */
+int16_t ax, ay, az, gx, gy, gz;
+int x_adc_value, y_adc_value, z_adc_value;
+long duration, distance;
+
+volatile float minutes, seconds;
+volatile int degree, secs, mins;
+
+/* ---------- STRUCT ---------- */
+struct MyData {
+  byte X;
+  byte Y;
+  byte Z;
+} data;
+
+/* ---------- GPS LOCATION ---------- */
+void loc() {
+  smartDelay(1000);
+
+  if (!gps.location.isValid()) {
+    Serial.println("AT+CMGF=1");
+    delay(1000);
+    Serial.print("AT+CMGS=\"");
+    Serial.print(phoneNumber);
+    Serial.println("\"");
+    delay(1000);
+    Serial.println("http://maps.google.com/?q=26.891986,81.072929");
+    Serial.write(26);
+    delay(2000);
+  } else {
+    double lat = gps.location.lat();
+    double lng = gps.location.lng();
+
+    Serial.println("AT+CMGF=1");
+    delay(1000);
+    Serial.print("AT+CMGS=\"");
+    Serial.print(phoneNumber);
+    Serial.println("\"");
+    delay(1000);
+    Serial.print("http://maps.google.com/?q=");
+    Serial.print(lat, 6);
+    Serial.print(",");
+    Serial.print(lng, 6);
+    Serial.write(26);
+    delay(2000);
+  }
+}
+
+/* ---------- SETUP ---------- */
+void setup() {
+  Serial.begin(9600);
+  Wire.begin();
+  mpu.initialize();
+
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+  pinMode(buz, OUTPUT);
+  pinMode(2, OUTPUT);
+
+  digitalWrite(buz, LOW);
+  digitalWrite(2, LOW);
+
+  for (int i = 0; i < 2; i++) {
+    digitalWrite(buz, HIGH);
+    delay(70);
+    digitalWrite(buz, LOW);
+    delay(70);
+  }
+}
+
+/* ---------- LOOP ---------- */
+void loop() {
+
+  /* MPU6050 FALL DETECTION */
+  mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+  data.Z = map(az, -17000, 17000, 0, 255);
+  delay(500);
+
+  if (data.Z < 100) {
+    buzzerAlert(20, 20);
+    sendSMS("stick fallen down");
+    loc();
+  }
+
+  /* ANALOG INPUTS */
+  x_adc_value = analogRead(x_out);
+  y_adc_value = analogRead(y_out);
+  z_adc_value = analogRead(z_out);
+
+  /* ULTRASONIC SENSOR */
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+
+  duration = pulseIn(echoPin, HIGH);
+  distance = duration / 58.2;
+
+  if (distance < 60) {
+    buzzerAlert(4, 70);
+    sendSMS("obstacle detected");
+    loc();
+  }
+
+  /* EMERGENCY BUTTON */
+  if (x_adc_value > 500) {
+    buzzerAlert(5, 35);
+    sendSMS("emergency button pressed");
+    loc();
+  }
+
+  /* LIGHT CONTROL */
+  if (y_adc_value < 100) {
+    digitalWrite(2, HIGH);
+    sendSMS("light on");
+  } else {
+    digitalWrite(2, LOW);
+  }
+
+  /* WATER DETECTION */
+  if (z_adc_value < 500) {
+    buzzerAlert(2, 1000);
+    sendSMS("water detected");
+    loc();
+  }
+}
+
+/* ---------- HELPER FUNCTIONS ---------- */
+
+void buzzerAlert(int count, int delayTime) {
+  for (int i = 0; i < count; i++) {
+    digitalWrite(buz, HIGH);
+    delay(delayTime);
+    digitalWrite(buz, LOW);
+    delay(delayTime);
+  }
+}
+
+static void smartDelay(unsigned long ms) {
+  unsigned long start = millis();
+  do {
+    while (Serial.available())
+      gps.encode(Serial.read());
+  } while (millis() - start < ms);
+}
+
+void sendSMS(const char* message) {
+  Serial.println("AT+CMGF=1");
+  delay(1000);
+
+  Serial.print("AT+CMGS=\"");
+  Serial.print(phoneNumber);
+  Serial.println("\"");
+  delay(1000);
+
+  Serial.println(message);
+  delay(500);
+  Serial.write(26);
+  delay(2000);
+}
